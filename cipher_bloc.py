@@ -1,5 +1,6 @@
 import math
 import random
+import time
 
 # =========================================================
 # SBOX MATHEMATIQUE
@@ -39,7 +40,6 @@ for i,p in enumerate(PBOX):
 # =========================================================
 
 def rotl(x,r):
-
     return ((x<<r)|(x>>(64-r))) & 0xFFFFFFFFFFFFFFFF
 
 
@@ -150,15 +150,12 @@ class MiniCipher:
 
         state = pt
 
-        # rounds 1..7
         for r in range(self.rounds-1):
 
             state ^= self.round_keys[r]
             state = substitute(state,SBOX)
             state = permute(state,PBOX)
             state = mix_add_mod(state)
-
-        # FINAL ROUND (no permute, no mix)
 
         state ^= self.round_keys[self.rounds-1]
         state = substitute(state,SBOX)
@@ -173,12 +170,10 @@ class MiniCipher:
 
         state = ct
 
-        # inverse final round
         state ^= self.round_keys[self.rounds]
         state = substitute(state,INV_SBOX)
         state ^= self.round_keys[self.rounds-1]
 
-        # inverse rounds
         for r in reversed(range(self.rounds-1)):
 
             state = inv_mix_add_mod(state)
@@ -190,9 +185,15 @@ class MiniCipher:
 
 
 # =========================================================
-# TEST AVALANCHE
+# METRICS
 # =========================================================
 
+# Hamming Distance
+def hamming_distance(a,b):
+    return bin(a ^ b).count("1")
+
+
+# Strict Avalanche Criterion
 def avalanche_test(cipher,pt):
 
     pt2 = pt ^ 1
@@ -200,36 +201,95 @@ def avalanche_test(cipher,pt):
     c1 = cipher.encrypt(pt)
     c2 = cipher.encrypt(pt2)
 
-    diff = c1 ^ c2
-
-    changed_bits = bin(diff).count("1")
-
-    return changed_bits
+    return hamming_distance(c1,c2)
 
 
-# =========================================================
-# ENTROPY TEST
-# =========================================================
-
+# Shannon Entropy
 def entropy(cipher):
 
-    bits = []
+    bits=[]
 
     for _ in range(200):
 
-        pt = random.getrandbits(64)
-
-        ct = cipher.encrypt(pt)
+        pt=random.getrandbits(64)
+        ct=cipher.encrypt(pt)
 
         for i in range(64):
             bits.append((ct>>i)&1)
 
-    p = sum(bits)/len(bits)
+    p=sum(bits)/len(bits)
 
     if p==0 or p==1:
         return 0
 
-    return -p*math.log2(p) - (1-p)*math.log2(1-p)
+    return -p*math.log2(p)-(1-p)*math.log2(1-p)
+
+
+# Frequency Test
+def frequency_test(cipher):
+
+    zeros=0
+    ones=0
+
+    for _ in range(200):
+
+        pt=random.getrandbits(64)
+        ct=cipher.encrypt(pt)
+
+        for i in range(64):
+
+            if (ct>>i)&1:
+                ones+=1
+            else:
+                zeros+=1
+
+    return zeros,ones
+
+
+# Correlation Coefficient
+def correlation_test(cipher):
+
+    pts=[]
+    cts=[]
+
+    for _ in range(200):
+
+        pt=random.getrandbits(64)
+        ct=cipher.encrypt(pt)
+
+        pts.append(pt)
+        cts.append(ct)
+
+    mean_p=sum(pts)/len(pts)
+    mean_c=sum(cts)/len(cts)
+
+    num=0
+    den1=0
+    den2=0
+
+    for i in range(len(pts)):
+
+        num+=(pts[i]-mean_p)*(cts[i]-mean_c)
+        den1+=(pts[i]-mean_p)**2
+        den2+=(cts[i]-mean_c)**2
+
+    return num/math.sqrt(den1*den2)
+
+
+# Time Test
+def time_test(cipher):
+
+    pts=[random.getrandbits(64) for _ in range(100)]
+
+    start=time.time_ns()
+
+    for pt in pts:
+        ct=cipher.encrypt(pt)
+        cipher.decrypt(ct)
+
+    end=time.time_ns()
+
+    return end-start
 
 
 # =========================================================
@@ -240,36 +300,46 @@ print("\n===== MINI BLOCK CIPHER TEST =====\n")
 
 while True:
 
-    key_input = input("Enter KEY (hex) : ")
-    pt_input = input("Enter PLAINTEXT (hex) : ")
+    key_input=input("Enter KEY (hex): ")
+    pt_input=input("Enter PLAINTEXT (hex): ")
 
-    key = int(key_input,16)
-    pt  = int(pt_input,16)
+    key=int(key_input,16)
+    pt=int(pt_input,16)
 
-    cipher = MiniCipher(key)
+    cipher=MiniCipher(key)
 
-    ct = cipher.encrypt(pt)
-
-    dec = cipher.decrypt(ct)
+    ct=cipher.encrypt(pt)
+    dec=cipher.decrypt(ct)
 
     print("\nRESULTS")
-    print("KEY :",hex(key))
-    print("PT  :",hex(pt))
-    print("CT  :",hex(ct))
-    print("DEC :",hex(dec))
-    print("OK  :",pt==dec)
+    print("KEY:",hex(key))
+    print("PT :",hex(pt))
+    print("CT :",hex(ct))
+    print("DEC:",hex(dec))
+    print("OK :",pt==dec)
 
-    # Avalanche
-    avalanche = avalanche_test(cipher,pt)
+    # metrics
+    print("\n===== SECURITY METRICS =====")
 
-    print("\nAvalanche effect :",avalanche,"bits changed")
+    avalanche=avalanche_test(cipher,pt)
+    print("Avalanche effect:",avalanche,"bits")
 
-    # Entropy
-    ent = entropy(cipher)
+    ent=entropy(cipher)
+    print("Entropy:",ent)
 
-    print("Entropy :",ent)
+    zeros,ones=frequency_test(cipher)
+    print("Frequency test -> zeros:",zeros,"ones:",ones)
 
-    cont = input("\nTest another message? (y/n) : ")
+    corr=correlation_test(cipher)
+    print("Correlation coefficient:",corr)
 
-    if cont.lower() != "y":
+    hd=hamming_distance(pt,ct)
+    print("Hamming distance PT-CT:",hd)
+
+    t=time_test(cipher)
+    print("Time for 100 enc/dec:",t,"ns")
+
+    cont=input("\nTest another message? (y/n): ")
+
+    if cont.lower()!="y":
         break
