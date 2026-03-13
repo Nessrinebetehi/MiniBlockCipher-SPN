@@ -3,311 +3,205 @@ import random
 import time
 
 # =========================================================
-# SBOX MATHEMATIQUE
+# SBOX MATHEMATIQUE DYNAMIQUE
 # =========================================================
-
-def generate_sbox():
-
-    sbox = []
-
-    for x in range(256):
-        y = (pow(x,3,257) ^ 0xA5) % 256
-        sbox.append(y)
-
+def generate_sbox(key):
+    sbox = list(range(256))
+    random.seed(key ^ 0xA5A5A5A5A5A5A5A5)
+    random.shuffle(sbox)
     inv = [0]*256
     for i,v in enumerate(sbox):
         inv[v] = i
-
-    return sbox,inv
-
-
-SBOX,INV_SBOX = generate_sbox()
-
+    return sbox, inv
 
 # =========================================================
-# PBOX MATHEMATIQUE
+# PBOX MATHEMATIQUE DYNAMIQUE (64 bits)
 # =========================================================
-
-PBOX = [(13*i)%64 for i in range(64)]
-
-INV_PBOX = [0]*64
-for i,p in enumerate(PBOX):
-    INV_PBOX[p] = i
-
+def generate_pbox(key):
+    pbox = list(range(64))
+    random.seed(key ^ 0x123456789ABCDEF)
+    random.shuffle(pbox)
+    inv_pbox = [0]*64
+    for i,p in enumerate(pbox):
+        inv_pbox[p] = i
+    return pbox, inv_pbox
 
 # =========================================================
 # ROTATION
 # =========================================================
-
 def rotl(x,r):
     return ((x<<r)|(x>>(64-r))) & 0xFFFFFFFFFFFFFFFF
-
 
 # =========================================================
 # SUBSTITUTION
 # =========================================================
-
 def substitute(state,sbox):
-
     res = 0
-
     for i in range(8):
-
         b = (state>>(8*i)) & 0xFF
         res |= sbox[b]<<(8*i)
-
     return res
-
 
 # =========================================================
 # PERMUTATION
 # =========================================================
-
 def permute(state,pbox):
-
     res = 0
-
     for i,p in enumerate(pbox):
-
         if (state>>i)&1:
             res |= 1<<p
-
     return res
 
-
 # =========================================================
-# MIX ADD MOD (inversible)
+# MIX ADD MOD (100% inversible)
 # =========================================================
-
-def mix_add_mod(state):
-
+def mix_bytes(state):
     b = [(state>>(8*i)) & 0xFF for i in range(8)]
-
     for i in range(7):
         b[i] = (b[i] + b[i+1]) % 256
-
     res = 0
     for i in range(8):
         res |= b[i]<<(8*i)
-
     return res
 
-
-def inv_mix_add_mod(state):
-
+def inv_mix_bytes(state):
     b = [(state>>(8*i)) & 0xFF for i in range(8)]
-
     for i in reversed(range(7)):
         b[i] = (b[i] - b[i+1]) % 256
-
     res = 0
     for i in range(8):
         res |= b[i]<<(8*i)
-
     return res
 
-
 # =========================================================
-# KEY SCHEDULE
+# KEY SCHEDULE RENFORCEE
 # =========================================================
-
-def generate_round_keys(key,rounds):
-
-    keys=[]
-    k=key
-
+def generate_round_keys(key, rounds, sbox):
+    keys = []
+    k = key
     for r in range(rounds+1):
-
-        k = rotl(k,7)
-
-        byte = (k>>56)&0xFF
-
-        k ^= SBOX[byte]<<48
-
+        k = rotl(k, 7)
+        byte = (k>>56) & 0xFF
+        k ^= sbox[byte]<<48
         k ^= r<<56
-
+        # diffusion supplémentaire
+        k ^= (k & 0x0F0F0F0F0F0F0F0F) << 4
         k &= 0xFFFFFFFFFFFFFFFF
-
         keys.append(k)
-
     return keys
 
-
 # =========================================================
-# CIPHER
+# CIPHER AVANCE
 # =========================================================
-
 class MiniCipher:
-
     def __init__(self,key):
-
-        self.rounds = 8
-        self.round_keys = generate_round_keys(key,self.rounds)
+        self.rounds = 14
+        self.sbox, self.inv_sbox = generate_sbox(key)
+        self.pbox, self.inv_pbox = generate_pbox(key)
+        self.round_keys = generate_round_keys(key, self.rounds, self.sbox)
 
     # ---------------- ENCRYPTION ----------------
-
-    def encrypt(self,pt):
-
+    def encrypt(self, pt):
         state = pt
-
         for r in range(self.rounds-1):
-
             state ^= self.round_keys[r]
-            state = substitute(state,SBOX)
-            state = permute(state,PBOX)
-            state = mix_add_mod(state)
-
+            state = substitute(state, self.sbox)
+            state = permute(state, self.pbox)
+            state = mix_bytes(state)
         state ^= self.round_keys[self.rounds-1]
-        state = substitute(state,SBOX)
+        state = substitute(state, self.sbox)
         state ^= self.round_keys[self.rounds]
-
         return state
-
 
     # ---------------- DECRYPTION ----------------
-
-    def decrypt(self,ct):
-
+    def decrypt(self, ct):
         state = ct
-
         state ^= self.round_keys[self.rounds]
-        state = substitute(state,INV_SBOX)
+        state = substitute(state, self.inv_sbox)
         state ^= self.round_keys[self.rounds-1]
-
         for r in reversed(range(self.rounds-1)):
-
-            state = inv_mix_add_mod(state)
-            state = permute(state,INV_PBOX)
-            state = substitute(state,INV_SBOX)
+            state = inv_mix_bytes(state)
+            state = permute(state, self.inv_pbox)
+            state = substitute(state, self.inv_sbox)
             state ^= self.round_keys[r]
-
         return state
-
 
 # =========================================================
 # METRICS
 # =========================================================
-
-# Hamming Distance
 def hamming_distance(a,b):
-    return bin(a ^ b).count("1")
+    return bin(a^b).count("1")
 
-
-# Strict Avalanche Criterion
-def avalanche_test(cipher,pt):
-
+def avalanche_test(cipher, pt):
     pt2 = pt ^ 1
-
     c1 = cipher.encrypt(pt)
     c2 = cipher.encrypt(pt2)
-
     return hamming_distance(c1,c2)
 
-
-# Shannon Entropy
 def entropy(cipher):
-
     bits=[]
-
     for _ in range(200):
-
         pt=random.getrandbits(64)
         ct=cipher.encrypt(pt)
-
         for i in range(64):
             bits.append((ct>>i)&1)
-
     p=sum(bits)/len(bits)
-
     if p==0 or p==1:
         return 0
-
     return -p*math.log2(p)-(1-p)*math.log2(1-p)
 
-
-# Frequency Test
 def frequency_test(cipher):
-
     zeros=0
     ones=0
-
     for _ in range(200):
-
         pt=random.getrandbits(64)
         ct=cipher.encrypt(pt)
-
         for i in range(64):
-
             if (ct>>i)&1:
                 ones+=1
             else:
                 zeros+=1
+    return zeros, ones
 
-    return zeros,ones
-
-
-# Correlation Coefficient
 def correlation_test(cipher):
-
     pts=[]
     cts=[]
-
     for _ in range(200):
-
         pt=random.getrandbits(64)
         ct=cipher.encrypt(pt)
-
         pts.append(pt)
         cts.append(ct)
-
     mean_p=sum(pts)/len(pts)
     mean_c=sum(cts)/len(cts)
-
     num=0
     den1=0
     den2=0
-
     for i in range(len(pts)):
-
         num+=(pts[i]-mean_p)*(cts[i]-mean_c)
         den1+=(pts[i]-mean_p)**2
         den2+=(cts[i]-mean_c)**2
-
     return num/math.sqrt(den1*den2)
 
-
-# Time Test
 def time_test(cipher):
-
     pts=[random.getrandbits(64) for _ in range(100)]
-
     start=time.time_ns()
-
     for pt in pts:
         ct=cipher.encrypt(pt)
         cipher.decrypt(ct)
-
     end=time.time_ns()
-
     return end-start
-
 
 # =========================================================
 # PROGRAMME INTERACTIF
 # =========================================================
-
-print("\n===== MINI BLOCK CIPHER TEST =====\n")
+print("\n===== MINI BLOCK CIPHER AVANCE (FINAL) =====\n")
 
 while True:
-
     key_input=input("Enter KEY (hex): ")
     pt_input=input("Enter PLAINTEXT (hex): ")
-
     key=int(key_input,16)
     pt=int(pt_input,16)
-
     cipher=MiniCipher(key)
-
     ct=cipher.encrypt(pt)
     dec=cipher.decrypt(ct)
 
@@ -318,28 +212,15 @@ while True:
     print("DEC:",hex(dec))
     print("OK :",pt==dec)
 
-    # metrics
     print("\n===== SECURITY METRICS =====")
-
-    avalanche=avalanche_test(cipher,pt)
-    print("Avalanche effect:",avalanche,"bits")
-
-    ent=entropy(cipher)
-    print("Entropy:",ent)
-
-    zeros,ones=frequency_test(cipher)
-    print("Frequency test -> zeros:",zeros,"ones:",ones)
-
-    corr=correlation_test(cipher)
-    print("Correlation coefficient:",corr)
-
-    hd=hamming_distance(pt,ct)
-    print("Hamming distance PT-CT:",hd)
-
-    t=time_test(cipher)
-    print("Time for 100 enc/dec:",t,"ns")
+    print("Avalanche effect:", avalanche_test(cipher, pt), "bits")
+    print("Entropy:", entropy(cipher))
+    zeros, ones = frequency_test(cipher)
+    print("Frequency test -> zeros:", zeros, "ones:", ones)
+    print("Correlation coefficient:", correlation_test(cipher))
+    print("Hamming distance PT-CT:", hamming_distance(pt, ct))
+    print("Time for 100 enc/dec:", time_test(cipher), "ns")
 
     cont=input("\nTest another message? (y/n): ")
-
     if cont.lower()!="y":
         break
