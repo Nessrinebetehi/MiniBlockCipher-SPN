@@ -192,25 +192,44 @@ def time_test(cipher):
     return end-start
 
 # =========================================================
+# FONCTION DE NETTOYAGE HEX
+# =========================================================
+def clean_hex_input(s):
+    s = s.strip().lower()
+    if s.startswith("0x"):
+        s = s[2:]
+    elif s.startswith("x"):
+        s = s[1:]
+    # Vérifie que le reste est bien hex
+    if any(c not in "0123456789abcdef" for c in s):
+        raise ValueError("Invalid hexadecimal input!")
+    return s
+
+# =========================================================
 # PROGRAMME INTERACTIF
 # =========================================================
 print("\n===== MINI BLOCK CIPHER AVANCE (FINAL) =====\n")
 
 while True:
-    key_input=input("Enter KEY (hex): ")
-    pt_input=input("Enter PLAINTEXT (hex): ")
-    key=int(key_input,16)
-    pt=int(pt_input,16)
-    cipher=MiniCipher(key)
-    ct=cipher.encrypt(pt)
-    dec=cipher.decrypt(ct)
+    try:
+        key_input = input("Enter KEY (hex): ")
+        pt_input  = input("Enter PLAINTEXT (hex): ")
+        key = int(clean_hex_input(key_input), 16)
+        pt  = int(clean_hex_input(pt_input), 16)
+    except ValueError as e:
+        print("Erreur de saisie hexadécimale:", e)
+        continue
+
+    cipher = MiniCipher(key)
+    ct = cipher.encrypt(pt)
+    dec = cipher.decrypt(ct)
 
     print("\nRESULTS")
-    print("KEY:",hex(key))
-    print("PT :",hex(pt))
-    print("CT :",hex(ct))
-    print("DEC:",hex(dec))
-    print("OK :",pt==dec)
+    print("KEY:", hex(key))
+    print("PT :", hex(pt))
+    print("CT :", hex(ct))
+    print("DEC:", hex(dec))
+    print("OK :", pt==dec)
 
     print("\n===== SECURITY METRICS =====")
     print("Avalanche effect:", avalanche_test(cipher, pt), "bits")
